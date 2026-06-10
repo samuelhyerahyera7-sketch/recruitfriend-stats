@@ -24,11 +24,18 @@
     }
     header h1 { font-size: 28px; font-weight: 700; color: #fff; letter-spacing: -0.5px; }
     header p { color: #94a3b8; margin-top: 4px; font-size: 14px; }
-    .refresh-btn {
+
+    .header-actions {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .action-btn {
       background: #1e2130;
       border: 1px solid #2d3348;
       color: #94a3b8;
-      padding: 8px 16px;
+      padding: 8px 14px;
       border-radius: 8px;
       cursor: pointer;
       font-size: 13px;
@@ -36,9 +43,13 @@
       align-items: center;
       gap: 6px;
       transition: border-color 0.2s, color 0.2s;
+      white-space: nowrap;
     }
-    .refresh-btn:hover { border-color: #4ade80; color: #4ade80; }
-    .refresh-btn.spinning svg { animation: spin 1s linear infinite; }
+    .action-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .action-btn:not(:disabled):hover { border-color: #60a5fa; color: #60a5fa; }
+    .action-btn.word:not(:disabled):hover { border-color: #a78bfa; color: #a78bfa; }
+    .action-btn.refresh:not(:disabled):hover { border-color: #4ade80; color: #4ade80; }
+    .action-btn.spinning svg { animation: spin 1s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
 
     #loading {
@@ -103,7 +114,6 @@
     .chart-card h2 { font-size: 15px; font-weight: 600; color: #cbd5e1; margin-bottom: 20px; }
     .chart-card h2 span { float: right; font-size: 12px; font-weight: 400; color: #64748b; }
     canvas { display: block; }
-
     #last-updated { font-size: 12px; color: #475569; margin-top: 24px; text-align: right; }
 
     @media (max-width: 768px) {
@@ -119,12 +129,22 @@
     <h1>RecruitFriend — User Analytics</h1>
     <p>Live data from Supabase auth</p>
   </div>
-  <button class="refresh-btn" id="refreshBtn" onclick="loadData()">
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
-    </svg>
-    Refresh
-  </button>
+  <div class="header-actions">
+    <button class="action-btn" id="pdfBtn" onclick="downloadPDF()" disabled>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Download PDF
+    </button>
+    <button class="action-btn word" id="wordBtn" onclick="downloadWord()" disabled>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+      Download Word
+    </button>
+    <button class="action-btn refresh" id="refreshBtn" onclick="loadData()">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+      </svg>
+      Refresh
+    </button>
+  </div>
 </header>
 
 <div id="error-msg"></div>
@@ -216,6 +236,17 @@
   };
 
   let charts = {};
+  let liveData = null;
+
+  // ── Lazy script loader ─────────────────────────────────────────
+  function loadScript(src) {
+    return new Promise((resolve, reject) => {
+      if (document.querySelector(`script[src="${src}"]`)) { resolve(); return; }
+      const s = document.createElement('script');
+      s.src = src; s.onload = resolve; s.onerror = reject;
+      document.head.appendChild(s);
+    });
+  }
 
   function destroyCharts() {
     Object.values(charts).forEach(c => c.destroy());
@@ -226,13 +257,314 @@
     return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'short' });
   }
 
+  function fmtDateLong(iso) {
+    return new Date(iso + 'T00:00:00').toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });
+  }
+
+  // ── Canvas → base64 bytes helper ──────────────────────────────
+  function canvasToBytes(id) {
+    const c = document.getElementById(id);
+    const b64 = c.toDataURL('image/png').split(',')[1];
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    return arr.buffer;
+  }
+
+  function canvasDims(id) {
+    const c = document.getElementById(id);
+    return { w: c.width, h: c.height };
+  }
+
+  // ── PDF Download ───────────────────────────────────────────────
+  async function downloadPDF() {
+    const btn = document.getElementById('pdfBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Generating…';
+
+    try {
+      await loadScript('https://html2canvas.hertzen.com/dist/html2canvas.min.js');
+      await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
+
+      const { jsPDF } = window.jspdf;
+      const dashboard = document.getElementById('dashboard');
+
+      const canvas = await html2canvas(dashboard, {
+        scale: 1.5,
+        backgroundColor: '#0f1117',
+        useCORS: true,
+        logging: false,
+      });
+
+      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+      const pageW = pdf.internal.pageSize.getWidth();
+      const pageH = pdf.internal.pageSize.getHeight();
+      const imgW = pageW;
+      const imgH = (canvas.height * imgW) / canvas.width;
+      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+
+      let y = 0;
+      let page = 0;
+      while (y < imgH) {
+        if (page > 0) pdf.addPage();
+        pdf.addImage(imgData, 'JPEG', 0, -y, imgW, imgH);
+        y += pageH;
+        page++;
+      }
+
+      const date = new Date().toISOString().split('T')[0];
+      pdf.save(`recruitfriend-analytics-${date}.pdf`);
+    } catch (e) {
+      alert('PDF generation failed: ' + e.message);
+      console.error(e);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Download PDF';
+    }
+  }
+
+  // ── Word Download ─────────────────────────────────────────────
+  async function downloadWord() {
+    if (!liveData) return;
+    const btn = document.getElementById('wordBtn');
+    btn.disabled = true;
+    btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="animation:spin 1s linear infinite"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Generating…';
+
+    try {
+      await loadScript('https://unpkg.com/docx@8.5.0/build/index.js');
+      await loadScript('https://cdn.jsdelivr.net/npm/file-saver@2.0.5/dist/FileSaver.min.js');
+
+      const {
+        Document, Packer, Paragraph, TextRun, Table, TableRow, TableCell,
+        HeadingLevel, AlignmentType, WidthType, BorderStyle,
+        ImageRun, ShadingType, PageBreak,
+      } = window.docx;
+
+      const d = liveData;
+      const total = d.total_users;
+      const googleCount = (d.providers.find(p => p.provider === 'google') || {}).count || 0;
+      const peak = d.daily_signups.reduce((a, b) => b.signups > a.signups ? b : a);
+      const today = new Date();
+      const sevenDaysAgo = new Date(today); sevenDaysAgo.setDate(today.getDate() - 7);
+      const last7 = d.daily_signups.filter(x => new Date(x.date) >= sevenDaysAgo).reduce((s, x) => s + x.signups, 0);
+
+      const noBorder = { style: BorderStyle.NONE, size: 0, color: 'FFFFFF' };
+      const cellBorders = { top: noBorder, bottom: noBorder, left: noBorder, right: noBorder };
+
+      function heading(text, level = HeadingLevel.HEADING_1) {
+        return new Paragraph({ text, heading: level, spacing: { before: 300, after: 120 } });
+      }
+
+      function para(text, opts = {}) {
+        return new Paragraph({ children: [new TextRun({ text, ...opts })], spacing: { after: 80 } });
+      }
+
+      function spacer() {
+        return new Paragraph({ text: '', spacing: { after: 160 } });
+      }
+
+      function statsTable(rows) {
+        return new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: rows.map(([label, value]) =>
+            new TableRow({
+              children: [
+                new TableCell({
+                  borders: cellBorders,
+                  shading: { type: ShadingType.SOLID, color: 'F3F4F6' },
+                  width: { size: 50, type: WidthType.PERCENTAGE },
+                  children: [new Paragraph({ children: [new TextRun({ text: label, bold: true, size: 20 })], spacing: { before: 60, after: 60 } })],
+                }),
+                new TableCell({
+                  borders: cellBorders,
+                  width: { size: 50, type: WidthType.PERCENTAGE },
+                  children: [new Paragraph({ children: [new TextRun({ text: String(value), size: 20 })], spacing: { before: 60, after: 60 } })],
+                }),
+              ],
+            })
+          ),
+        });
+      }
+
+      function dataTable(headers, rows) {
+        const headerRow = new TableRow({
+          tableHeader: true,
+          children: headers.map(h =>
+            new TableCell({
+              borders: cellBorders,
+              shading: { type: ShadingType.SOLID, color: '1E3A5F' },
+              children: [new Paragraph({ children: [new TextRun({ text: h, bold: true, color: 'FFFFFF', size: 18 })], spacing: { before: 60, after: 60 } })],
+            })
+          ),
+        });
+        const dataRows = rows.map(cells =>
+          new TableRow({
+            children: cells.map(cell =>
+              new TableCell({
+                borders: cellBorders,
+                children: [new Paragraph({ children: [new TextRun({ text: String(cell), size: 18 })], spacing: { before: 40, after: 40 } })],
+              })
+            ),
+          })
+        );
+        return new Table({
+          width: { size: 100, type: WidthType.PERCENTAGE },
+          rows: [headerRow, ...dataRows],
+        });
+      }
+
+      function chartImage(canvasId, widthPx, heightPx) {
+        const dims = canvasDims(canvasId);
+        const aspect = dims.h / dims.w;
+        const displayW = widthPx;
+        const displayH = Math.round(displayW * aspect);
+        return new Paragraph({
+          children: [
+            new ImageRun({
+              data: canvasToBytes(canvasId),
+              transformation: { width: displayW, height: displayH },
+              type: 'png',
+            }),
+          ],
+          spacing: { after: 160 },
+        });
+      }
+
+      const dow = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+      const sortedDow = [...d.day_of_week].sort((a, b) => a.dow - b.dow);
+
+      const doc = new Document({
+        creator: 'RecruitFriend Analytics',
+        title: 'RecruitFriend User Analytics Report',
+        description: 'Live analytics report generated from Supabase auth data',
+        sections: [{
+          children: [
+            // ── Title ──
+            new Paragraph({
+              children: [new TextRun({ text: 'RecruitFriend', bold: true, size: 56, color: '1E3A5F' })],
+              spacing: { after: 80 },
+            }),
+            new Paragraph({
+              children: [new TextRun({ text: 'User Analytics Report', size: 36, color: '64748B' })],
+              spacing: { after: 80 },
+            }),
+            new Paragraph({
+              children: [new TextRun({ text: `Generated: ${new Date().toLocaleString('en-GB')}`, size: 20, color: '94A3B8' })],
+              spacing: { after: 400 },
+            }),
+
+            // ── Summary ──
+            heading('Summary Statistics'),
+            statsTable([
+              ['Total Users',          total.toLocaleString()],
+              ['Email Confirmed',       `${d.confirmed.toLocaleString()} (${((d.confirmed/total)*100).toFixed(1)}%)`],
+              ['Unconfirmed',           `${d.unconfirmed.toLocaleString()} (${((d.unconfirmed/total)*100).toFixed(1)}%)`],
+              ['Google Sign-ins',       `${googleCount.toLocaleString()} (${((googleCount/total)*100).toFixed(1)}%)`],
+              ['Email / Password',      `${(total-googleCount).toLocaleString()} (${(((total-googleCount)/total)*100).toFixed(1)}%)`],
+              ['Peak Day',              `${fmtDateLong(peak.date)} — ${peak.signups} signups`],
+              ['Last 7 Days Signups',   last7.toLocaleString()],
+              ['First User',            fmtDateLong(d.daily_signups[0]?.date)],
+            ]),
+            spacer(),
+
+            // ── Daily Signups ──
+            heading('Daily Signups', HeadingLevel.HEADING_2),
+            para('New user registrations per calendar day.'),
+            chartImage('dailySignups', 580, 200),
+            dataTable(
+              ['Date', 'New Signups'],
+              [...d.daily_signups].reverse().slice(0, 30).map(r => [fmtDateLong(r.date), r.signups])
+            ),
+            spacer(),
+
+            // ── Daily Logins ──
+            heading('Daily Active Logins', HeadingLevel.HEADING_2),
+            para('Users by their most recent sign-in date.'),
+            chartImage('dailyLogins', 580, 200),
+            dataTable(
+              ['Date', 'Active Users'],
+              [...d.daily_logins].reverse().slice(0, 30).map(r => [fmtDateLong(r.date), r.logins])
+            ),
+            spacer(),
+
+            // ── Weekly ──
+            heading('Weekly Signups', HeadingLevel.HEADING_2),
+            para('Signup totals grouped by week.'),
+            chartImage('weeklySignups', 480, 260),
+            dataTable(
+              ['Week Starting', 'Signups'],
+              [...d.weekly_signups].reverse().map(r => [fmtDateLong(r.week_start), r.signups])
+            ),
+            spacer(),
+
+            // ── Day of Week ──
+            heading('Signups by Day of Week', HeadingLevel.HEADING_2),
+            para('All-time signup distribution across days of the week.'),
+            chartImage('dayOfWeek', 400, 260),
+            dataTable(
+              ['Day', 'Total Signups'],
+              sortedDow.map(r => [dow[r.dow] || r.name, r.signups])
+            ),
+            spacer(),
+
+            // ── Auth Provider ──
+            heading('Auth Provider Breakdown', HeadingLevel.HEADING_2),
+            para('How users are signing in — email/password vs Google OAuth.'),
+            chartImage('providerPie', 320, 260),
+            dataTable(
+              ['Provider', 'Users', 'Percentage'],
+              d.providers.map(r => [
+                r.provider === 'google' ? 'Google OAuth' : 'Email / Password',
+                r.count.toLocaleString(),
+                `${((r.count/total)*100).toFixed(1)}%`,
+              ])
+            ),
+            spacer(),
+
+            // ── Confirmation ──
+            heading('Email Confirmation Status', HeadingLevel.HEADING_2),
+            para('Breakdown of users who have confirmed their email address.'),
+            chartImage('confirmPie', 320, 260),
+            dataTable(
+              ['Status', 'Users', 'Percentage'],
+              [
+                ['Confirmed',   d.confirmed.toLocaleString(),   `${((d.confirmed/total)*100).toFixed(1)}%`],
+                ['Unconfirmed', d.unconfirmed.toLocaleString(), `${((d.unconfirmed/total)*100).toFixed(1)}%`],
+              ]
+            ),
+            spacer(),
+
+            // ── Footer ──
+            new Paragraph({
+              children: [new TextRun({ text: '— End of Report —', size: 18, color: '94A3B8', italics: true })],
+              alignment: AlignmentType.CENTER,
+              spacing: { before: 400 },
+            }),
+          ],
+        }],
+      });
+
+      const blob = await Packer.toBlob(doc);
+      const date = new Date().toISOString().split('T')[0];
+      saveAs(blob, `recruitfriend-analytics-${date}.docx`);
+
+    } catch (e) {
+      alert('Word generation failed: ' + e.message);
+      console.error(e);
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg> Download Word';
+    }
+  }
+
+  // ── Chart rendering ───────────────────────────────────────────
   function render(data) {
+    liveData = data;
     destroyCharts();
 
     const total = data.total_users;
     const googleCount = (data.providers.find(p => p.provider === 'google') || {}).count || 0;
 
-    // Stats
     document.getElementById('s-total').textContent = total.toLocaleString();
     document.getElementById('s-since').textContent = `Since ${fmtDate(data.daily_signups[0]?.date)}`;
     document.getElementById('s-confirmed').textContent = data.confirmed.toLocaleString();
@@ -247,14 +579,10 @@
     document.getElementById('s-peak-val').textContent = `${peak.signups} signups in one day`;
 
     const today = new Date();
-    const sevenDaysAgo = new Date(today);
-    sevenDaysAgo.setDate(today.getDate() - 7);
-    const last7 = data.daily_signups
-      .filter(d => new Date(d.date) >= sevenDaysAgo)
-      .reduce((sum, d) => sum + d.signups, 0);
+    const sevenDaysAgo = new Date(today); sevenDaysAgo.setDate(today.getDate() - 7);
+    const last7 = data.daily_signups.filter(d => new Date(d.date) >= sevenDaysAgo).reduce((s, d) => s + d.signups, 0);
     document.getElementById('s-last7').textContent = last7.toLocaleString();
 
-    // Daily Signups
     charts.dailySignups = new Chart(document.getElementById('dailySignups'), {
       type: 'line',
       data: {
@@ -266,7 +594,6 @@
       options: lineOpts()
     });
 
-    // Daily Logins
     charts.dailyLogins = new Chart(document.getElementById('dailyLogins'), {
       type: 'line',
       data: {
@@ -278,7 +605,6 @@
       options: lineOpts()
     });
 
-    // Weekly Signups
     charts.weeklySignups = new Chart(document.getElementById('weeklySignups'), {
       type: 'bar',
       data: {
@@ -290,7 +616,6 @@
       options: barOpts()
     });
 
-    // Day of Week
     const dow = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
     const sorted = [...data.day_of_week].sort((a, b) => a.dow - b.dow);
     const dowVals = sorted.map(d => d.signups);
@@ -306,7 +631,6 @@
       options: barOpts()
     });
 
-    // Auth Provider Pie
     charts.providerPie = new Chart(document.getElementById('providerPie'), {
       type: 'doughnut',
       data: {
@@ -318,7 +642,6 @@
       options: pieOpts(total)
     });
 
-    // Confirmation Pie
     charts.confirmPie = new Chart(document.getElementById('confirmPie'), {
       type: 'doughnut',
       data: {
@@ -330,13 +653,16 @@
       options: pieOpts(total)
     });
 
-    document.getElementById('last-updated').textContent =
-      `Last updated: ${new Date().toLocaleString()}`;
+    document.getElementById('last-updated').textContent = `Last updated: ${new Date().toLocaleString()}`;
+
+    document.getElementById('pdfBtn').disabled = false;
+    document.getElementById('wordBtn').disabled = false;
   }
 
   function lineOpts() {
     return {
       responsive: true,
+      animation: false,
       plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
       scales: {
         x: { grid: { color: '#1a1f2e' }, ticks: { maxTicksLimit: 12, maxRotation: 45 } },
@@ -348,6 +674,7 @@
   function barOpts() {
     return {
       responsive: true,
+      animation: false,
       plugins: { legend: { display: false }, tooltip: { mode: 'index', intersect: false } },
       scales: {
         x: { grid: { color: '#1a1f2e' }, ticks: { maxRotation: 45 } },
@@ -359,21 +686,20 @@
   function pieOpts(total) {
     return {
       responsive: true,
+      animation: false,
       plugins: {
         legend: { position: 'bottom', labels: { padding: 16, font: { size: 13 } } },
         tooltip: {
-          callbacks: {
-            label: ctx => ` ${ctx.label}: ${ctx.parsed} (${((ctx.parsed / total) * 100).toFixed(1)}%)`
-          }
+          callbacks: { label: ctx => ` ${ctx.label}: ${ctx.parsed} (${((ctx.parsed/total)*100).toFixed(1)}%)` }
         }
       }
     };
   }
 
+  // ── Data fetcher ──────────────────────────────────────────────
   async function loadData() {
     const btn = document.getElementById('refreshBtn');
     btn.classList.add('spinning');
-
     document.getElementById('error-msg').style.display = 'none';
 
     try {
@@ -384,16 +710,12 @@
           'Authorization': `Bearer ${SUPABASE_ANON}`,
           'Content-Type': 'application/json',
         },
-        body: '{}'
+        body: '{}',
       });
 
-      if (!res.ok) {
-        const err = await res.text();
-        throw new Error(`HTTP ${res.status}: ${err}`);
-      }
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${await res.text()}`);
 
       const data = await res.json();
-
       document.getElementById('loading').style.display = 'none';
       document.getElementById('dashboard').style.display = 'block';
       render(data);
@@ -408,7 +730,6 @@
     }
   }
 
-  // Auto-refresh every 5 minutes
   loadData();
   setInterval(loadData, 5 * 60 * 1000);
 </script>
