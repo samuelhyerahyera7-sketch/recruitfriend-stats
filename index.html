@@ -287,29 +287,33 @@
       await loadScript('https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js');
 
       const { jsPDF } = window.jspdf;
-      const dashboard = document.getElementById('dashboard');
+      const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+      const pageW = pdf.internal.pageSize.getWidth(); // 297mm
+      const pageH = pdf.internal.pageSize.getHeight(); // 210mm
+      const pad = 12; // mm padding on each side
 
-      const canvas = await html2canvas(dashboard, {
-        scale: 1.5,
-        backgroundColor: '#0f1117',
-        useCORS: true,
-        logging: false,
-      });
+      const h2cOpts = { scale: 2, backgroundColor: '#0f1117', useCORS: true, logging: false };
 
-      const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
-      const pageW = pdf.internal.pageSize.getWidth();
-      const pageH = pdf.internal.pageSize.getHeight();
-      const imgW = pageW;
-      const imgH = (canvas.height * imgW) / canvas.width;
-      const imgData = canvas.toDataURL('image/jpeg', 0.92);
+      async function addSection(el, isFirst) {
+        if (!isFirst) pdf.addPage();
+        const canvas = await html2canvas(el, h2cOpts);
+        const maxW = pageW - pad * 2;
+        const maxH = pageH - pad * 2;
+        const ratio = Math.min(maxW / canvas.width, maxH / canvas.height);
+        const imgW = canvas.width * ratio;
+        const imgH = canvas.height * ratio;
+        const x = (pageW - imgW) / 2;
+        const y = (pageH - imgH) / 2;
+        pdf.addImage(canvas.toDataURL('image/jpeg', 0.93), 'JPEG', x, y, imgW, imgH);
+      }
 
-      let y = 0;
-      let page = 0;
-      while (y < imgH) {
-        if (page > 0) pdf.addPage();
-        pdf.addImage(imgData, 'JPEG', 0, -y, imgW, imgH);
-        y += pageH;
-        page++;
+      // Page 1 — stats cards
+      await addSection(document.querySelector('.stats-grid'), true);
+
+      // Pages 2–7 — one chart card per page
+      const cards = document.querySelectorAll('.chart-card');
+      for (const card of cards) {
+        await addSection(card, false);
       }
 
       const date = new Date().toISOString().split('T')[0];
